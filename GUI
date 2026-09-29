@@ -1,0 +1,220 @@
+#include <Arduino_GFX_Library.h>
+
+Arduino_DataBus *bus = new Arduino_HWSPI(
+  2,   // DC
+  15,  // CS
+  14,  // SCK
+  13,  // MOSI
+  12   // MISO
+);
+
+Arduino_GFX *gfx = new Arduino_ST7796(
+  bus,
+  -1,    // RST
+  1,     // rotation
+  false, // IPS
+  320,
+  480
+);
+
+// Live values
+float tempValue = 0.0;
+float humidValue = 0.0;
+int occupancyValue = 0;
+float solarValue = 0.0;
+float airValue = 0.0;
+
+String modeValue = "AUTO";
+String fanValue  = "OFF";
+String scValue   = "OFF";
+String mistValue = "OFF";
+
+String incomingLine = "";
+
+void drawBoxLabelValue(int x, int y, int w, int h, String label, String value) {
+  gfx->drawRoundRect(x, y, w, h, 8, RGB565_WHITE);
+
+  gfx->setTextColor(RGB565_CYAN);
+  gfx->setTextSize(2);
+  gfx->setCursor(x + 8, y + 10);
+  gfx->print(label);
+
+  gfx->setTextColor(RGB565_WHITE);
+  gfx->setTextSize(3);
+  gfx->setCursor(x + 10, y + 42);
+  gfx->print(value);
+}
+
+void drawLayout() {
+  gfx->fillScreen(RGB565_BLACK);
+
+  // Screen in this rotation is about 480x320
+  int outerX = 8;
+  int outerY = 8;
+  int outerW = 464;
+  int outerH = 304;
+
+  gfx->drawRoundRect(outerX, outerY, outerW, outerH, 10, RGB565_WHITE);
+
+  // =========================
+  // MODE BOX
+  // =========================
+  int modeX = 120;
+  int modeY = 18;
+  int modeW = 220;
+  int modeH = 42;
+
+  gfx->drawRoundRect(modeX, modeY, modeW, modeH, 8, RGB565_WHITE);
+  gfx->setTextColor(RGB565_YELLOW);
+  gfx->setTextSize(2);
+  gfx->setCursor(modeX + 18, modeY + 13);
+  gfx->print("Mode: ");
+  gfx->print(modeValue);
+
+  // =========================
+  // CONTROL BOXES
+  // =========================
+  int boxY = 78;
+  int boxW = 120;
+  int boxH = 82;
+  int gap = 18;
+
+  int box1X = 28;
+  int box2X = box1X + boxW + gap;
+  int box3X = box2X + boxW + gap;
+
+  drawBoxLabelValue(box1X, boxY, boxW, boxH, "Cooling", scValue);
+  drawBoxLabelValue(box2X, boxY, boxW, boxH, "Fans", fanValue);
+  drawBoxLabelValue(box3X, boxY, boxW, boxH, "Misters", mistValue);
+
+  // =========================
+  // DATA PANEL
+  // =========================
+  int dataX = 20;
+  int dataY = 175;
+  int dataW = 430;
+  int dataH = 125;
+
+  gfx->drawRoundRect(dataX, dataY, dataW, dataH, 8, RGB565_WHITE);
+
+  gfx->setTextColor(RGB565_GREEN);
+  gfx->setTextSize(2);
+  gfx->setCursor(dataX + 170, dataY + 10);
+  gfx->print("DATA");
+
+  gfx->setTextColor(RGB565_WHITE);
+  gfx->setTextSize(2);
+
+  // Two-column layout so everything fits vertically
+  int leftX = dataX + 15;
+  int rightX = dataX + 220;
+
+  int row1 = dataY + 38;
+  int row2 = dataY + 62;
+  int row3 = dataY + 86;
+
+  gfx->setCursor(leftX, row1);
+  gfx->print("Temp: ");
+  gfx->print(tempValue, 1);
+  gfx->print(" F");
+
+  gfx->setCursor(leftX, row2);
+  gfx->print("Humidity: ");
+  gfx->print(humidValue, 1);
+  gfx->print(" %");
+
+  gfx->setCursor(leftX, row3);
+  gfx->print("Occupancy: ");
+  gfx->print(occupancyValue);
+
+  gfx->setCursor(rightX, row1);
+  gfx->print("Solar: ");
+  gfx->print(solarValue, 1);
+  gfx->print(" W/m^2");
+
+  gfx->setCursor(rightX, row2);
+  gfx->print("Air Vel: ");
+  gfx->print(airValue, 1);
+  gfx->print(" m/s");
+}
+
+void parseLine(String line) {
+  line.trim();
+
+  if (!line.startsWith("DATA,")) return;
+
+  // Expected format:
+  // DATA,temp,humidity,occupancy,solar,air,mode,fan,sc,mist
+
+  String parts[10];
+  int partIndex = 0;
+  int start = 0;
+
+  for (int i = 0; i < line.length(); i++) {
+    if (line.charAt(i) == ',') {
+      if (partIndex < 10) {
+        parts[partIndex++] = line.substring(start, i);
+        start = i + 1;
+      }
+    }
+  }
+
+  if (partIndex < 9) {
+    parts[partIndex++] = line.substring(start);
+  } else {
+    parts[partIndex] = line.substring(start);
+  }
+
+  // Must have 10 parts total:
+  // [0]=DATA
+  // [1]=temp
+  // [2]=humidity
+  // [3]=occupancy
+  // [4]=solar
+  // [5]=air
+  // [6]=mode
+  // [7]=fan
+  // [8]=sc
+  // [9]=mist
+  if (partIndex < 9) return;
+
+  tempValue = parts[1].toFloat();
+  humidValue = parts[2].toFloat();
+  occupancyValue = parts[3].toInt();
+  solarValue = parts[4].toFloat();
+  airValue = parts[5].toFloat();
+
+  modeValue = parts[6];
+  fanValue = parts[7];
+  scValue = parts[8];
+  mistValue = parts[9];
+
+  drawLayout();
+
+  Serial.println("Display updated");
+}
+
+void setup() {
+  Serial.begin(9600);
+
+  pinMode(27, OUTPUT);
+  digitalWrite(27, HIGH);
+
+  gfx->begin();
+  drawLayout();
+
+  Serial.println("ESP32 display ready");
+}
+
+void loop() {
+  while (Serial.available()) {
+    char c = Serial.read();
+
+    if (c == '\n') {
+      parseLine(incomingLine);
+      incomingLine = "";
+    } else if (c != '\r') {
+      incomingLine += c;
+    }
+  }
+}
